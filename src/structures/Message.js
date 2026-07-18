@@ -516,6 +516,11 @@ class Message extends Base {
     async downloadMedia() {
         if (!this.hasMedia) return undefined;
 
+        // Dual-compat: WA Web 2.3000.1043xxx (Jul-2026) renamed id._serialized
+        // to id.$1 on message IDs. Fall back so evaluate() receives a real id.
+        const msgId = this.id?._serialized ?? this.id?.$1;
+        if (!msgId) return undefined;
+
         const result = await this.client.pupPage.evaluate(async (msgId) => {
             const resolved = await window.WWebJS.resolveMediaBlob(msgId);
             if (!resolved) return null;
@@ -529,7 +534,7 @@ class Message extends Base {
                 filename: resolved.filename,
                 filesize: resolved.filesize,
             };
-        }, this.id._serialized);
+        }, msgId);
 
         if (!result) return undefined;
         return new MessageMedia(
@@ -549,12 +554,16 @@ class Message extends Base {
     async downloadMediaStream({ chunkSize = 10 * 1024 * 1024 } = {}) {
         if (!this.hasMedia) return undefined;
 
+        // Same dual-compat guard as downloadMedia — id._serialized -> id.$1.
+        const msgId = this.id?._serialized ?? this.id?.$1;
+        if (!msgId) return undefined;
+
         const blobHandle = await this.client.pupPage.evaluateHandle(
             async (msgId) => {
                 const result = await window.WWebJS.resolveMediaBlob(msgId);
                 return result?.blob ?? null;
             },
-            this.id._serialized,
+            msgId,
         );
 
         let metadata;
@@ -568,7 +577,7 @@ class Message extends Base {
                     filename: msg?.filename,
                     filesize: msg?.size,
                 };
-            }, this.id._serialized);
+            }, msgId);
         } catch (err) {
             await blobHandle.dispose().catch(() => {});
             throw err;
