@@ -1231,13 +1231,53 @@ exports.LoadUtils = () => {
 
         const cached = window
             .require('WAWebMediaInMemoryBlobCache')
-            .InMemoryMediaBlobCache.get(msg.mediaObject?.filehash);
+            ?.InMemoryMediaBlobCache?.get(msg.mediaObject?.filehash);
 
         let blob;
         if (cached) {
             blob = cached;
-        } else if (msg.mediaObject?.mediaBlob) {
+        } else if (msg.mediaObject?.mediaBlob?.forceToBlob) {
             blob = msg.mediaObject.mediaBlob.forceToBlob();
+        }
+
+        // Fall back to DownloadManager when the blob cache is missing or
+        // looks like a thumbnail (much smaller than the declared media size).
+        // Needed since WA Web 2.3000.1043xxx (Jul-2026), where `forceToBlob`
+        // stopped returning the full asset in many paths.
+        const expectedSize = msg.size || 0;
+        const blobLooksIncomplete =
+            blob && expectedSize > 0 && blob.size < expectedSize * 0.5;
+
+        if (!blob || blobLooksIncomplete) {
+            try {
+                const mockQpl = {
+                    addAnnotations: function () {
+                        return this;
+                    },
+                    addPoint: function () {
+                        return this;
+                    },
+                };
+                const decryptedMedia = await window
+                    .require('WAWebDownloadManager')
+                    .downloadManager.downloadAndMaybeDecrypt({
+                        directPath: msg.directPath,
+                        encFilehash: msg.encFilehash,
+                        filehash: msg.filehash,
+                        mediaKey: msg.mediaKey,
+                        mediaKeyTimestamp: msg.mediaKeyTimestamp,
+                        type: msg.type,
+                        signal: new AbortController().signal,
+                        downloadQpl: mockQpl,
+                    });
+                if (decryptedMedia) {
+                    blob = new Blob([decryptedMedia], {
+                        type: msg.mimetype || 'application/octet-stream',
+                    });
+                }
+            } catch (e) {
+                if (!(e.status && e.status === 404)) throw e;
+            }
         }
 
         if (!blob) return null;
